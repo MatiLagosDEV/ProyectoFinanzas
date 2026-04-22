@@ -9,7 +9,10 @@ router = APIRouter(prefix="/dividendos_personales", tags=["Dividendos Personales
 def format_pesos(n):
     if n is None:
         return None
-    return "$" + format(int(round(float(n), 0)), ",").replace(",", ".") + " CLP"
+    # Mantener precisión interna con decimales, pero mostrar sin decimales (formato chileno)
+    rounded = round(float(n), 0)  # Redondear a entero para mostrar
+    formatted = f"{int(rounded):,}".replace(",", ".")
+    return "$" + formatted + " CLP"
 
 @router.get("/{inversion_id}")
 def dividendos_personales(inversion_id: int, db: Session = Depends(get_db)):

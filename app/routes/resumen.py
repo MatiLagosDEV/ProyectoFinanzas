@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.inversion import Inversion
 from app.models.historial_diario import HistorialDiario
+from app.core.config import obtener_comision_porcentaje, calcular_comision_neta, calcular_iva_comision, calcular_comision
 from datetime import date, timedelta
 import yfinance as yf
 
@@ -15,7 +16,11 @@ def resumen_general(db: Session = Depends(get_db)):
     def format_pesos(n):
         if n is None:
             return None
-        return "$" + format(int(round(float(n), 0)), ",").replace(",", ".") + " CLP"
+        # Mantener precisión interna con decimales, pero mostrar sin decimales (formato chileno)
+        rounded = round(float(n), 0)  # Redondear a entero para mostrar
+        # Formatear con separadores de miles estilo chileno
+        formatted = f"{int(rounded):,}".replace(",", ".")
+        return "$" + formatted + " CLP"
 
     def format_precio(n):
         if n is None:
@@ -41,7 +46,8 @@ def resumen_general(db: Session = Depends(get_db)):
                 "total_acciones": 0,
                 "total_monto_comprado": 0.0,
                 "precio_actual": None,
-                "total_dividendos": 0.0
+                "total_dividendos": 0.0,
+                "total_comisiones": 0.0
             }
         
         # Obtener precio actual del ticker
@@ -60,13 +66,14 @@ def resumen_general(db: Session = Depends(get_db)):
         movimientos = sorted(inv.movimientos, key=lambda m: m.fecha)
         for mov in movimientos:
             if mov.tipo.lower() == "compra":
-                acciones_mov = int(mov.acciones_compradas or 0)
+                acciones_mov = float(mov.acciones_compradas or 0)
                 acciones_dict[ticker]["total_acciones"] += acciones_mov
                 acciones_dict[ticker]["total_monto_comprado"] += mov.monto or 0
+                acciones_dict[ticker]["total_comisiones"] += mov.comision or 0
                 total_invertido_general += mov.monto or 0
                 total_comisiones_general += mov.comision or 0
             elif mov.tipo.lower() == "venta":
-                acciones_mov = int(mov.acciones_compradas or 0)
+                acciones_mov = float(mov.acciones_compradas or 0)
                 acciones_dict[ticker]["total_acciones"] -= acciones_mov
         
         # Calcular dividendos por la fecha de pago
@@ -102,6 +109,7 @@ def resumen_general(db: Session = Depends(get_db)):
         total_monto = datos["total_monto_comprado"]
         precio_act = datos["precio_actual"]
         total_divs = datos["total_dividendos"]
+        total_comis = datos["total_comisiones"]
         
         precio_compra_promedio = None
         if total_acciones > 0:
@@ -116,7 +124,7 @@ def resumen_general(db: Session = Depends(get_db)):
         valor_actual = total_acciones * precio_para_calculo if precio_para_calculo is not None else 0
         total_valor_actual_general += valor_actual
         
-        ganancia = valor_actual - (total_acciones * precio_compra_promedio if precio_compra_promedio else 0) + total_divs
+        ganancia = valor_actual - (total_acciones * precio_compra_promedio if precio_compra_promedio else 0) - total_comis + total_divs
         total_ganancia_general += ganancia
         
         por_accion.append({
@@ -178,7 +186,6 @@ def resumen_general(db: Session = Depends(get_db)):
                     precio_compra_real = (mov.monto or 0) / mov.acciones_compradas
                 
                 valor_actual_compra = (mov.acciones_compradas * precio_actual) if precio_actual and mov.acciones_compradas else 0
-                ganancia_compra = valor_actual_compra - (mov.monto or 0)
                 
                 # Calcular dividendos recibidos desde esta compra hasta hoy
                 dividendos_compra = 0.0
@@ -199,17 +206,23 @@ def resumen_general(db: Session = Depends(get_db)):
                 except Exception:
                     dividendos_compra = 0.0
                 
+                # Calcular ganancia/pérdida incluyendo dividendos
+                # G/P = (Valor Actual - Monto Invertido - Comisión) + Dividendos
+                ganancia_compra = valor_actual_compra - (mov.monto or 0) - (mov.comision or 0) + dividendos_compra
+                
                 compras_detalladas.append({
                     "ticker": ticker,
                     "fecha": str(mov.fecha),
                     "cantidad_acciones": mov.acciones_compradas,
                     "broker": mov.broker or "No especificado",
+                    "comision_neta": format_pesos(calcular_comision_neta(mov.monto, mov.broker or "Banco Santander")),
+                    "iva": format_pesos(calcular_iva_comision(mov.monto, mov.broker or "Banco Santander")),
                     "comision": format_pesos(mov.comision),
-                    "comision_porcentaje": f"{mov.comision_porcentaje}%" if mov.comision_porcentaje else "0%",
+                    "comision_porcentaje": f"{mov.comision_porcentaje}%" if mov.comision_porcentaje else f"{obtener_comision_porcentaje(mov.broker or 'Banco Santander')}%",
                     "monto_bruto": format_pesos(mov.monto),
                     "monto_neto": format_pesos((mov.monto or 0) - (mov.comision or 0)),
                     "precio_compra": format_precio(precio_compra_real),
-                    "precio_compra_promedio": format_precio(promedios_por_ticker.get(ticker)),
+                    "precio_compra_promedio": format_precio(precio_compra_real),
                     "precio_actual": format_precio(precio_actual),
                     "valor_actual": format_pesos(valor_actual_compra),
                     "dividendos_recibidos": format_pesos(dividendos_compra),
@@ -221,6 +234,7 @@ def resumen_general(db: Session = Depends(get_db)):
             "total_invertido": format_pesos(total_invertido_general),
             "valor_portafolio_actual": format_pesos(total_valor_actual_general),
             "dividendos_recibidos": format_pesos(total_dividendos_general),
+            "total_comisiones": format_pesos(total_comisiones_general),
             "ganancia_perdida": format_pesos(total_ganancia_general),
             "cantidad_inversiones": len(inversiones)
         },

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
+import yfinance as yf
 from app.core.database import get_db
 from app.core.config import obtener_comision_porcentaje, calcular_comision, BROKER_DEFAULT
 from app.models.inversion import Inversion, Movimiento
@@ -33,7 +34,7 @@ def crear_inversion(inversion: InversionCreate, db: Session = Depends(get_db)):
     acciones_compradas = None
     if precio_compra and precio_compra > 0:
         acciones_compradas_decimal = db_inversion.monto / precio_compra
-        acciones_compradas = int(acciones_compradas_decimal)
+        acciones_compradas = round(acciones_compradas_decimal, 2)  # Mantener decimales
     
     # Calcular comisión usando Banco Santander por defecto
     broker = BROKER_DEFAULT
@@ -56,16 +57,16 @@ def crear_inversion(inversion: InversionCreate, db: Session = Depends(get_db)):
     return db_inversion
 
 
-import yfinance as yf
-
-
 @router.get("/")
 def listar_inversiones(db: Session = Depends(get_db)):
     inversiones = db.query(Inversion).all()
     def format_pesos(n):
         if n is None:
             return None
-        return "$" + format(int(round(float(n), 0)), ",").replace(",", ".") + " CLP"
+        # Mantener precisión interna con decimales, pero mostrar sin decimales (formato chileno)
+        rounded = round(float(n), 0)  # Redondear a entero para mostrar
+        formatted = f"{int(rounded):,}".replace(",", ".")
+        return "$" + formatted + " CLP"
 
     def format_precio(n):
         if n is None:
