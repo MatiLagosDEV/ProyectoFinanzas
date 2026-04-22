@@ -9,6 +9,8 @@ class MovimientoBase(BaseModel):
     acciones_compradas: Optional[float] = None
     fecha: date
     comision: Optional[float] = None
+    broker: Optional[str] = "Banco Santander"
+    comision_porcentaje: Optional[float] = None
 
 
 class MovimientoCreate(MovimientoBase):

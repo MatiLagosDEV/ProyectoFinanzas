@@ -21,4 +21,6 @@ class Movimiento(Base):
     acciones_compradas = Column(Float, nullable=True)
     fecha = Column(Date)
     comision = Column(Float, nullable=True)
+    broker = Column(String, default="Banco Santander")
+    comision_porcentaje = Column(Float, nullable=True)
     inversion = relationship("Inversion", back_populates="movimientos")

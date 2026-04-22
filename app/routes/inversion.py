@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from app.core.database import get_db
+from app.core.config import obtener_comision_porcentaje, calcular_comision, BROKER_DEFAULT
 from app.models.inversion import Inversion, Movimiento
 from app.schemas.inversion import Inversion as InversionSchema, InversionCreate, Movimiento as MovimientoSchema, MovimientoCreate
 
@@ -33,16 +34,21 @@ def crear_inversion(inversion: InversionCreate, db: Session = Depends(get_db)):
     if precio_compra and precio_compra > 0:
         acciones_compradas_decimal = db_inversion.monto / precio_compra
         acciones_compradas = int(acciones_compradas_decimal)
-        # Si el resultado es muy grande (> 1000), dividir por 1000 (posible error de escala)
-        if acciones_compradas > 1000:
-            acciones_compradas = int(acciones_compradas / 1000)
+    
+    # Calcular comisión usando Banco Santander por defecto
+    broker = BROKER_DEFAULT
+    comision_porcentaje = obtener_comision_porcentaje(broker)
+    comision_monto = calcular_comision(db_inversion.monto, broker)
+    
     movimiento = Movimiento(
         inversion_id=db_inversion.id,
         tipo="compra",
         monto=db_inversion.monto,
         acciones_compradas=acciones_compradas,
         fecha=db_inversion.fecha,
-        comision=0
+        comision=comision_monto,
+        broker=broker,
+        comision_porcentaje=comision_porcentaje
     )
     db.add(movimiento)
     db.commit()
@@ -99,6 +105,8 @@ def listar_inversiones(db: Session = Depends(get_db)):
                     "monto": format_pesos(m.monto),
                     "acciones_compradas": int(m.acciones_compradas) if m.acciones_compradas is not None else None,
                     "fecha": m.fecha,
+                    "broker": m.broker or "Banco Santander",
+                    "comision_porcentaje": f"{m.comision_porcentaje}%" if m.comision_porcentaje is not None else None,
                     "comision": format_pesos(m.comision) if m.comision is not None else None
                 } for m in inv.movimientos
             ]
